@@ -1,61 +1,112 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { Shell, Header } from "@/components/layout";
 import { useStore } from "@/lib/store";
-import type { SManga } from "@/types";
-import { Search, Globe, ArrowRight, RefreshCw } from "lucide-react";
+import { builtInSources, getAdapter, type MangaEntry, type Source } from "@/lib/sources";
+import { Search, Globe, Plus, RefreshCw, ChevronDown, Loader2 } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { cn } from "@/lib/utils";
 
-const defaultSources = [
-  { id: "mangadex", name: "MangaDex", lang: "en", baseUrl: "https://mangadex.org", supportsLatest: true },
-  { id: "manganato", name: "MangaNato", lang: "en", baseUrl: "https://manganato.com", supportsLatest: true },
-  { id: "toonguyenviet", name: "Toonguyenviet", lang: "vi", baseUrl: "https://toonguyenviet.me", supportsLatest: true },
-];
-
-// Placeholder manga data since sources require server-side proxy
-const placeholderManga: SManga[] = [
-  { url: "/manga/1", title: "Sample Manga 1", thumbnailUrl: null, author: "Author 1", artist: null, description: "Description 1", genre: ["Action", "Adventure"], status: 1, updateStrategy: 0 },
-  { url: "/manga/2", title: "Sample Manga 2", thumbnailUrl: null, author: "Author 2", artist: null, description: "Description 2", genre: ["Romance"], status: 0, updateStrategy: 0 },
-  { url: "/manga/3", title: "Sample Manga 3", thumbnailUrl: null, author: "Author 3", artist: null, description: "Description 3", genre: ["Comedy"], status: 2, updateStrategy: 0 },
-  { url: "/manga/4", title: "Sample Manga 4", thumbnailUrl: null, author: "Author 4", artist: null, description: "Description 4", genre: ["Drama"], status: 1, updateStrategy: 0 },
-  { url: "/manga/5", title: "Sample Manga 5", thumbnailUrl: null, author: "Author 5", artist: null, description: "Description 5", genre: ["Horror"], status: 0, updateStrategy: 0 },
-];
+const languageLabels: Record<string, string> = {
+  id: "Indonesian",
+  en: "English",
+  zh: "Chinese",
+  ja: "Japanese",
+  ko: "Korean",
+  all: "All",
+};
 
 export default function BrowsePage() {
-  const [sources] = useState(defaultSources);
-  const [selectedSource, setSelectedSource] = useState(defaultSources[0]);
-  const [manga, setManga] = useState<SManga[]>(placeholderManga);
+  const router = useRouter();
+  const [selectedSource, setSelectedSource] = useState<Source>(builtInSources[0]);
+  const [manga, setManga] = useState<MangaEntry[]>([]);
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchMode, setSearchMode] = useState(false);
+  const [hasMore, setHasMore] = useState(true);
+  const [filterLang, setFilterLang] = useState<string>("all");
 
   const addToLibrary = useStore((s) => s.addToLibrary);
   const mangaList = useStore((s) => s.mangaList);
 
+  // Filter sources by language
+  const filteredSources = builtInSources.filter(s => 
+    filterLang === "all" || s.lang === filterLang || s.lang === "all"
+  );
+
+  // Load manga from source
+  const loadManga = useCallback(async (sourceId: string, pageNum: number, isSearch: boolean, query?: string) => {
+    if (loading) return;
+    
+    setLoading(true);
+    try {
+      const adapter = getAdapter(sourceId);
+      if (!adapter) {
+        console.error("No adapter found for:", sourceId);
+        setManga([]);
+        return;
+      }
+
+      let results: MangaEntry[];
+      if (isSearch && query) {
+        results = await adapter.searchManga(query, pageNum);
+      } else {
+        results = await adapter.getPopularManga(pageNum);
+      }
+
+      if (pageNum === 1) {
+        setManga(results);
+      } else {
+        setManga(prev => [...prev, ...results]);
+      }
+
+      setHasMore(results.length > 0);
+    } catch (err) {
+      console.error("Failed to load manga:", err);
+      setManga([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [loading]);
+
+  useEffect(() => {
+    if (selectedSource) {
+      loadManga(selectedSource.id, page, searchMode, searchQuery);
+    }
+  }, [selectedSource, page, searchMode]);
+
+  useEffect(() => {
+    // Reset when source changes
+    setPage(1);
+    setManga([]);
+    setHasMore(true);
+  }, [selectedSource]);
+
   async function handleSearch(e: React.FormEvent) {
     e.preventDefault();
-    setPage(1);
+    if (!searchQuery.trim()) return;
+    
     setSearchMode(true);
-    // Filter placeholder data for demo
-    if (searchQuery) {
-      const filtered = placeholderManga.filter(m => 
-        m.title.toLowerCase().includes(searchQuery.toLowerCase())
-      );
-      setManga(filtered);
-    } else {
-      setManga(placeholderManga);
+    setPage(1);
+    setLoading(true);
+    
+    try {
+      const adapter = getAdapter(selectedSource.id);
+      if (adapter) {
+        const results = await adapter.searchManga(searchQuery, 1);
+        setManga(results);
+        setHasMore(results.length > 0);
+      }
+    } catch (err) {
+      console.error("Search failed:", err);
+    } finally {
+      setLoading(false);
     }
   }
 
-  function handleRefresh() {
-    setLoading(true);
-    setTimeout(() => {
-      setLoading(false);
-    }, 1000);
-  }
-
-  async function handleAddManga(m: SManga) {
+  async function handleAddManga(m: MangaEntry) {
     const newManga = {
       id: crypto.randomUUID(),
       sourceId: selectedSource.id,
@@ -65,9 +116,9 @@ export default function BrowsePage() {
       artist: m.artist,
       description: m.description,
       genre: m.genre,
-      status: m.status as 0 | 1 | 2 | 3 | 4 | 5,
+      status: m.status as 0,
       thumbnailUrl: m.thumbnailUrl,
-      updateStrategy: m.updateStrategy,
+      updateStrategy: 0 as 0,
       initialized: false,
       favorite: true,
       lastUpdate: 0,
@@ -83,8 +134,20 @@ export default function BrowsePage() {
       notes: "",
     };
     
-    await addToLibrary(newManga);
+    await addToLibrary(newManga as any);
   }
+
+  function handleLoadMore() {
+    if (hasMore && !loading) {
+      setPage(prev => prev + 1);
+    }
+  }
+
+  const handleSourceChange = (source: Source) => {
+    setSelectedSource(source);
+    setSearchMode(false);
+    setSearchQuery("");
+  };
 
   const isInLibrary = (url: string) => {
     return mangaList.some((m) => m.url === url && m.favorite);
@@ -95,20 +158,36 @@ export default function BrowsePage() {
       <Header title="Browse" showSearch={false} />
       
       <div className="p-4">
+        {/* Language Filter */}
+        <div className="mb-4 flex gap-2 overflow-x-auto">
+          {Object.entries(languageLabels).map(([lang, label]) => (
+            <button
+              key={lang}
+              onClick={() => setFilterLang(lang)}
+              className={cn(
+                "whitespace-nowrap rounded-lg px-3 py-1.5 text-sm",
+                filterLang === lang
+                  ? "bg-primary text-on-primary"
+                  : "bg-surface-container text-on-surface-variant"
+              )}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+
         {/* Source Tabs */}
         <div className="mb-4 flex gap-2 overflow-x-auto pb-2">
-          {sources.map((source) => (
+          {filteredSources.map((source) => (
             <button
               key={source.id}
-              onClick={() => {
-                setSelectedSource(source);
-                setSearchMode(false);
-              }}
-              className={`whitespace-nowrap rounded-lg px-3 py-1.5 text-sm ${
+              onClick={() => handleSourceChange(source)}
+              className={cn(
+                "whitespace-nowrap rounded-lg px-3 py-1.5 text-sm",
                 selectedSource.id === source.id
                   ? "bg-primary text-on-primary"
                   : "bg-surface-container text-on-surface-variant"
-              }`}
+              )}
             >
               {source.name}
             </button>
@@ -121,68 +200,90 @@ export default function BrowsePage() {
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-on-surface-variant" />
             <input
               type="text"
-              placeholder="Search manga..."
+              placeholder={`Search ${selectedSource.name}...`}
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              onFocus={() => setSearchMode(true)}
               className="w-full rounded-lg border border-outline-variant bg-surface-container-low py-2 pl-9 pr-4 text-sm focus:border-primary focus:outline-none"
             />
           </div>
-          <button type="submit" className="rounded-lg bg-primary px-4 py-2 text-on-primary">
+          <button 
+            type="submit" 
+            disabled={loading || !searchQuery.trim()}
+            className="rounded-lg bg-primary px-4 py-2 text-on-primary disabled:opacity-50"
+          >
             Search
           </button>
         </form>
 
         {/* Results */}
-        {loading ? (
-          <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
-            {Array.from({ length: 10 }).map((_, i) => (
-              <div key={i} className="animate-pulse rounded-lg bg-surface-container-high aspect-[3/4]" />
-            ))}
+        {loading && manga.length === 0 ? (
+          <div className="flex justify-center py-8">
+            <Loader2 className="h-6 w-6 animate-spin text-on-surface-variant" />
           </div>
-        ) : (
-          <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
-            {manga.map((m, i) => (
-              <div key={`${m.url}-${i}`} className="group relative">
-                <div className="aspect-[3/4] overflow-hidden rounded-lg bg-surface-container-highest">
-                  {m.thumbnailUrl && (
-                    <img src={m.thumbnailUrl} alt={m.title} className="h-full w-full object-cover" />
-                  )}
+        ) : manga.length > 0 ? (
+          <>
+            <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
+              {manga.map((m, i) => (
+                <div key={`${m.url}-${i}`} className="group relative">
+                  <div className="aspect-[3/4] overflow-hidden rounded-lg bg-surface-container-highest">
+                    {m.thumbnailUrl ? (
+                      <img 
+                        src={m.thumbnailUrl} 
+                        alt={m.title} 
+                        className="h-full w-full object-cover"
+                        loading="lazy"
+                      />
+                    ) : (
+                      <div className="flex h-full w-full items-center justify-center text-on-surface-variant text-xs">
+                        No Cover
+                      </div>
+                    )}
+                  </div>
+                  <div className="mt-1 line-clamp-2 text-sm">{m.title}</div>
+                  <button
+                    onClick={() => handleAddManga(m)}
+                    disabled={isInLibrary(m.url)}
+                    className={cn(
+                      "absolute bottom-12 right-2 rounded-full p-2 opacity-0 transition-opacity group-hover:opacity-100",
+                      isInLibrary(m.url)
+                        ? "bg-tertiary text-on-tertiary"
+                        : "bg-primary text-on-primary"
+                    )}
+                  >
+                    {isInLibrary(m.url) ? (
+                      <span className="text-xs">✓</span>
+                    ) : (
+                      <Plus className="h-4 w-4" />
+                    )}
+                  </button>
                 </div>
-                <div className="mt-1 line-clamp-2 text-sm">{m.title}</div>
+              ))}
+            </div>
+
+            {/* Load More */}
+            {hasMore && !loading && (
+              <div className="mt-4 flex justify-center">
                 <button
-                  onClick={() => handleAddManga(m)}
-                  disabled={isInLibrary(m.url)}
-                  className={`absolute bottom-12 right-2 rounded-full p-2 opacity-0 transition-opacity group-hover:opacity-100 ${
-                    isInLibrary(m.url)
-                      ? "bg-tertiary text-on-tertiary"
-                      : "bg-primary text-on-primary"
-                  }`}
+                  onClick={handleLoadMore}
+                  className="flex items-center gap-2 rounded-lg bg-surface-container px-4 py-2"
                 >
-                  <ArrowRight className="h-4 w-4" />
+                  <RefreshCw className="h-4 w-4" />
+                  Load More
                 </button>
               </div>
-            ))}
-          </div>
-        )}
+            )}
 
-        {/* Load More */}
-        {manga.length > 0 && !loading && (
-          <div className="mt-4 flex justify-center">
-            <button
-              onClick={handleRefresh}
-              className="flex items-center gap-2 rounded-lg bg-surface-container px-4 py-2"
-            >
-              <RefreshCw className="h-4 w-4" />
-              Load More
-            </button>
-          </div>
-        )}
-
-        {manga.length === 0 && !loading && (
+            {loading && (
+              <div className="mt-4 flex justify-center">
+                <Loader2 className="h-5 w-5 animate-spin text-on-surface-variant" />
+              </div>
+            )}
+          </>
+        ) : (
           <div className="py-12 text-center text-on-surface-variant">
             <Globe className="mx-auto mb-2 h-12 w-12 opacity-50" />
-            <p>Select a source and browse manga</p>
+            <p>No manga found</p>
+            <p className="text-sm mt-2">Try a different search or source</p>
           </div>
         )}
       </div>

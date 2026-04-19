@@ -1,16 +1,23 @@
 "use client";
 
+import { useState } from "react";
 import { Shell, Header } from "@/components/layout";
 import { useStore } from "@/lib/store";
 import { MangaGrid } from "@/components/manga";
-import { TrendingUp, Library } from "lucide-react";
+import { Filter, SortAsc, Shuffle } from "lucide-react";
+import { cn } from "@/lib/utils";
 
-export default function HomePage() {
+export default function LibraryPage() {
   const mangaList = useStore((s) => s.mangaList);
   const filters = useStore((s) => s.filters);
+  const setSearchFilter = useStore((s) => s.setSearchFilter);
+  const setSortBy = useStore((s) => s.setSortBy);
+  const setSortDirection = useStore((s) => s.setSortDirection);
+  const [showFilters, setShowFilters] = useState(false);
 
-  const filteredManga = mangaList
-    .filter((m) => m.favorite)
+  const libraryManga = mangaList.filter((m) => m.favorite);
+
+  const filteredManga = libraryManga
     .filter((m) => {
       if (!filters.search) return true;
       const search = filters.search.toLowerCase();
@@ -21,63 +28,94 @@ export default function HomePage() {
     })
     .sort((a, b) => {
       switch (filters.sortBy) {
-        case 0:
+        case 0: // Date added
           return filters.sortDirection === 1 ? b.dateAdded - a.dateAdded : a.dateAdded - b.dateAdded;
-        case 1:
+        case 1: // Last read
           return filters.sortDirection === 1 ? b.lastUpdate - a.lastUpdate : a.lastUpdate - b.lastUpdate;
-        case 3:
+        case 2: // Chapter count
+          return filters.sortDirection === 1 ? (b.lastUpdate || 0) - (a.lastUpdate || 0) : (a.lastUpdate || 0) - (b.lastUpdate || 0);
+        case 3: // Title
           return filters.sortDirection === 1 ? b.title.localeCompare(a.title) : a.title.localeCompare(b.title);
         default:
           return 0;
       }
     });
 
-  const libraryCount = mangaList.filter((m) => m.favorite).length;
+  const sortOptions = [
+    { value: 0, label: "Date added" },
+    { value: 1, label: "Last read" },
+    { value: 2, label: "Chapters" },
+    { value: 3, label: "Title" },
+  ];
 
   return (
     <Shell>
-      <Header title="WebYomi" showSearch />
+      <Header title="Library" showSearch />
       
       <div className="p-4">
-        {/* Stats */}
-        <div className="mb-6 grid grid-cols-3 gap-3">
-          <div className="rounded-lg bg-surface-container p-4 text-center">
-            <div className="text-2xl font-bold">{libraryCount}</div>
-            <div className="text-xs text-on-surface-variant">In Library</div>
-          </div>
-          <div className="rounded-lg bg-surface-container p-4 text-center">
-            <div className="text-2xl font-bold">0</div>
-            <div className="text-xs text-on-surface-variant">Unread</div>
-          </div>
-          <div className="rounded-lg bg-surface-container p-4 text-center">
-            <div className="text-2xl font-bold">0</div>
-            <div className="text-xs text-on-surface-variant">Downloaded</div>
-          </div>
+        {/* Toolbar */}
+        <div className="mb-4 flex items-center gap-2">
+          <button 
+            onClick={() => setShowFilters(!showFilters)}
+            className={cn(
+              "flex items-center gap-2 rounded-lg px-3 py-1.5 text-sm",
+              showFilters ? "bg-secondary-container text-on-secondary-container" : "bg-surface-container"
+            )}
+          >
+            <Filter className="h-4 w-4" />
+            Filter
+          </button>
+          <button 
+            onClick={() => setSortDirection(filters.sortDirection === 1 ? 0 : 1)}
+            className="flex items-center gap-2 rounded-lg bg-surface-container px-3 py-1.5 text-sm"
+          >
+            <SortAsc className="h-4 w-4" />
+            {sortOptions.find(o => o.value === filters.sortBy)?.label}
+          </button>
+          <div className="flex-1" />
+          <span className="text-sm text-on-surface-variant">
+            {filteredManga.length} titles
+          </span>
         </div>
 
-        {libraryCount > 0 ? (
-          <>
-            <section className="mb-6">
-              <h2 className="mb-3 flex items-center gap-2 text-lg font-semibold">
-                <Library className="h-5 w-5" />
-                My Library
-              </h2>
-              <MangaGrid
-                manga={filteredManga}
-                onMangaClick={(m) => {
-                  window.location.href = `/manga/${m.id}`;
-                }}
-              />
-            </section>
-          </>
-        ) : (
-          <div className="flex flex-col items-center justify-center py-16 text-center">
-            <div className="mb-4 rounded-full bg-surface-container-high p-4">
-              <TrendingUp className="h-8 w-8 text-on-surface-variant" />
+        {/* Filter Panel */}
+        {showFilters && (
+          <div className="mb-4 rounded-lg border border-outline-variant bg-surface-container p-3">
+            <div className="mb-3">
+              <label className="mb-2 block text-sm font-medium">Sort by</label>
+              <div className="flex flex-wrap gap-2">
+                {sortOptions.map((option) => (
+                  <button
+                    key={option.value}
+                    onClick={() => setSortBy(option.value as 0 | 1 | 2 | 3)}
+                    className={cn(
+                      "rounded-full px-3 py-1 text-xs",
+                      filters.sortBy === option.value
+                        ? "bg-primary text-on-primary"
+                        : "bg-surface-container-high"
+                    )}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
             </div>
-            <h3 className="mb-1 text-lg font-medium">Welcome to WebYomi</h3>
+          </div>
+        )}
+
+        <MangaGrid
+          manga={filteredManga}
+          onMangaClick={(m) => {
+            window.location.href = `/manga/${m.id}`;
+          }}
+        />
+
+        {libraryManga.length === 0 && (
+          <div className="flex flex-col items-center justify-center py-16 text-center">
+            <Shuffle className="mb-4 h-12 w-12 text-on-surface-variant opacity-50" />
+            <h3 className="mb-1 text-lg font-medium">Your library is empty</h3>
             <p className="mb-4 text-sm text-on-surface-variant">
-              Your manga library is empty. Start by browsing sources to add manga.
+              Browse sources to add manga to your library
             </p>
             <a
               href="/browse"
