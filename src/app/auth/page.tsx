@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useStore } from "@/lib/store";
 import { createBrowserClient } from "@supabase/ssr";
 import { User, Mail, Lock, LogIn } from "lucide-react";
@@ -11,18 +11,30 @@ export default function AuthPage() {
   const [loading, setLoading] = useState(false);
   const [mode, setMode] = useState<"signin" | "signup">("signin");
   const [error, setError] = useState("");
+  const [supabase, setSupabase] = useState<ReturnType<typeof createBrowserClient> | null>(null);
+  const [ready, setReady] = useState(false);
   
   const setAuthenticated = useStore((s) => s.setAuthenticated);
 
-  const supabase = createBrowserClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-  );
+  useEffect(() => {
+    const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+    if (url && key) {
+      setSupabase(createBrowserClient(url, key));
+      setReady(true);
+    }
+  }, []);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setLoading(true);
     setError("");
+
+    if (!supabase) {
+      setError("Supabase not configured. Please set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY env vars.");
+      setLoading(false);
+      return;
+    }
 
     try {
       if (mode === "signin") {
@@ -51,6 +63,12 @@ export default function AuthPage() {
   async function handleOAuthSignIn(provider: "google" | "github") {
     setLoading(true);
     setError("");
+
+    if (!supabase) {
+      setError("Supabase not configured. Please set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY env vars.");
+      setLoading(false);
+      return;
+    }
 
     try {
       const { error } = await supabase.auth.signInWithOAuth({
@@ -115,10 +133,10 @@ export default function AuthPage() {
 
         <button
           type="submit"
-          disabled={loading}
+          disabled={loading || !ready}
           className="w-full rounded-lg bg-primary py-2 text-on-primary disabled:opacity-50"
         >
-          {loading ? "Loading..." : mode === "signin" ? "Sign In" : "Sign Up"}
+          {!ready ? "Initializing..." : loading ? "Loading..." : mode === "signin" ? "Sign In" : "Sign Up"}
         </button>
       </form>
 
